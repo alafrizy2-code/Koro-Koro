@@ -26,17 +26,15 @@ sealed interface VoiceSearchState {
 
     data class Error(
         val message: String,
-        val isServiceUnavailable: Boolean = false
+        val needsSystemIntentFallback: Boolean = false
     ) : VoiceSearchState
 }
 
 /**
- * Isolated Android TV Voice Search Manager using SpeechRecognizer.
- * Completely separated from USB Karaoke Microphone settings & vocal effects.
+ * Android TV Voice Search Manager using SpeechRecognizer with system RecognizerIntent fallback.
  */
 class VoiceSearchManager(
-    private val context: Context,
-    private val usbAudioEngine: UsbKaraokeAudioEngine
+    private val context: Context
 ) {
     private var speechRecognizer: SpeechRecognizer? = null
 
@@ -47,17 +45,29 @@ class VoiceSearchManager(
         return SpeechRecognizer.isRecognitionAvailable(context)
     }
 
+    fun createSystemVoiceIntent(languageTag: String): Intent {
+        return Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, languageTag)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+            putExtra(
+                RecognizerIntent.EXTRA_PROMPT,
+                if (languageTag == "id-ID") "Ucapkan judul lagu atau nama penyanyi..."
+                else "Say a song title or singer name..."
+            )
+        }
+    }
+
     fun startListening(languageTag: String = "id-ID") {
         if (!isRecognitionAvailable()) {
             _state.value = VoiceSearchState.Error(
-                message = "Layanan pengenalan suara Google/Android tidak tersedia di perangkat ini. Gunakan pencarian teks atau periksa aplikasi Google.",
-                isServiceUnavailable = true
+                message = "Gunakan mikrofon sistem Google TV atau ketik judul lagu.",
+                needsSystemIntentFallback = true
             )
             return
         }
-
-        // Isolate USB karaoke mic without changing any vocal effects or Mic Monitor settings
-        usbAudioEngine.pauseForVoiceSearch()
 
         stopInternal()
 
@@ -87,24 +97,27 @@ class VoiceSearchManager(
             override fun onEndOfSpeech() {}
 
             override fun onError(error: Int) {
-                usbAudioEngine.resumeAfterVoiceSearch()
+                val needsFallback = error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ||
+                    error == SpeechRecognizer.ERROR_CLIENT
                 val msg = when (error) {
                     SpeechRecognizer.ERROR_AUDIO -> "Gagal merekam audio mikrofon remote/TV."
-                    SpeechRecognizer.ERROR_CLIENT -> "Kesalahan klien pengenalan suara."
-                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Izin mikrofon (RECORD_AUDIO) belum diberikan."
+                    SpeechRecognizer.ERROR_CLIENT -> "Mengalihkan ke mikrofon sistem Google TV..."
+                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Izin mikrofon belum diberikan. Tekan 'Mic Sistem TV' atau 'Ulangi Suara'."
                     SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
                         "Koneksi internet diperlukan untuk pengenalan suara."
-                    SpeechRecognizer.ERROR_NO_MATCH -> "Suara tidak dikenali. Silakan coba ucapkan judul lagu atau penyanyi lebih jelas."
+                    SpeechRecognizer.ERROR_NO_MATCH -> "Suara tidak dikenali. Silakan ucapkan judul lagu atau penyanyi lebih jelas."
                     SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Layanan suara sedang sibuk, coba sebentar lagi."
                     SpeechRecognizer.ERROR_SERVER -> "Server pengenalan suara sedang bermasalah."
-                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Tidak ada suara terdeteksi. Tekan mikrofon untuk mencoba lagi."
+                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Tidak ada suara terdeteksi. Tekan 'Ulangi Suara' untuk mencoba lagi."
                     else -> "Pengenalan suara gagal (kode $error)."
                 }
-                _state.value = VoiceSearchState.Error(message = msg)
+                _state.value = VoiceSearchState.Error(
+                    message = msg,
+                    needsSystemIntentFallback = needsFallback
+                )
             }
 
             override fun onResults(results: Bundle?) {
-                usbAudioEngine.resumeAfterVoiceSearch()
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 val scores = results?.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES)
                 val bestText = matches?.firstOrNull()?.trim().orEmpty()
@@ -136,34 +149,23 @@ class VoiceSearchManager(
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })
 
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, languageTag)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-            putExtra(
-                RecognizerIntent.EXTRA_PROMPT,
-                if (languageTag == "id-ID") "Ucapkan judul lagu atau nama penyanyi..."
-                else "Say a song title or singer name..."
-            )
-        }
-
         _state.value = VoiceSearchState.Listening(languageTag = languageTag)
-        recognizer.startListening(intent)
+        recognizer.startListening(createSystemVoiceIntent(languageTag))
     }
 
-    fun stopListening() {
-        stopInternal()
-        usbAudioEngine.resumeAfterVoiceSearch()
-        if (_state.value is VoiceSearchState.Listening) {
-            _state.value = VoiceSearchState.Idle
+    fun setDirectResult(text: String, languageTag: String) {
+        val clean = text.trim()
+        if (clean.isNotEmpty()) {
+            _state.value = VoiceSearchState.ResultReady(
+                recognizedText = clean,
+                isConfident = true,
+                languageTag = languageTag
+            )
         }
     }
 
     fun resetState() {
         stopInternal()
-        usbAudioEngine.resumeAfterVoiceSearch()
         _state.value = VoiceSearchState.Idle
     }
 

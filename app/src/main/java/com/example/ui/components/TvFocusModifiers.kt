@@ -1,9 +1,9 @@
 package com.example.ui.components
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
@@ -17,9 +17,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -42,26 +42,31 @@ fun TvFocusableSurface(
     containerColor: Color = TvCardBg,
     focusedContainerColor: Color = TvSurfaceElevated,
     focusedBorderColor: Color = FocusBorderPrimary,
-    unfocusedBorderColor: Color = DividerSubtle.copy(alpha = 0.5f),
-    focusScale: Float = 1.05f,
-    tonalElevation: Dp = 4.dp,
+    unfocusedBorderColor: Color = DividerSubtle.copy(alpha = 0.45f),
+    focusScale: Float = 1.035f,
+    tonalElevation: Dp = 0.dp,
     onFocusChanged: ((Boolean) -> Unit)? = null,
     content: @Composable BoxScope.(isFocused: Boolean) -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
 
+    val animSpec = remember { tween<Float>(durationMillis = 120, easing = FastOutSlowInEasing) }
+    val colorSpec = remember { tween<Color>(durationMillis = 120, easing = FastOutSlowInEasing) }
+
     val scale by animateFloatAsState(
         targetValue = if (isFocused) focusScale else 1f,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        animationSpec = animSpec,
         label = "tv_focus_scale"
     )
     val bgColor by animateColorAsState(
         targetValue = if (isFocused) focusedContainerColor else containerColor,
+        animationSpec = colorSpec,
         label = "tv_focus_bg"
     )
     val borderColor by animateColorAsState(
         targetValue = if (isFocused) focusedBorderColor else unfocusedBorderColor,
+        animationSpec = colorSpec,
         label = "tv_focus_border"
     )
 
@@ -69,7 +74,10 @@ fun TvFocusableSurface(
 
     Surface(
         modifier = taggedModifier
-            .scale(scale)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .onKeyEvent { event ->
                 if (event.type == KeyEventType.KeyUp &&
                     (event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter)
@@ -88,8 +96,8 @@ fun TvFocusableSurface(
             ),
         shape = shape,
         color = bgColor,
-        tonalElevation = if (isFocused) tonalElevation + 6.dp else tonalElevation,
-        shadowElevation = if (isFocused) 16.dp else 2.dp,
+        tonalElevation = tonalElevation,
+        shadowElevation = 0.dp,
         border = BorderStroke(
             width = if (isFocused) 2.5.dp else 1.dp,
             color = borderColor

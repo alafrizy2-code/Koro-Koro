@@ -3,9 +3,13 @@ package com.example.ui.screens
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.Uri
+import android.view.View
 import android.view.ViewGroup
+import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -13,36 +17,26 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Forward10
-import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -52,8 +46,6 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -76,27 +68,21 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.local.PlaylistEntity
 import com.example.model.KaraokeSong
-import com.example.model.UsbMicStatus
-import com.example.model.VocalPreset
-import com.example.model.VocalSettings
 import com.example.ui.components.TvFocusableSurface
 import com.example.ui.theme.KaraokeCrimson
 import com.example.ui.theme.KaraokeCyan
-import com.example.ui.theme.KaraokeEmerald
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.theme.TvBackground
 import com.example.ui.theme.TvSurface
 import com.example.ui.theme.TvSurfaceElevated
-import kotlinx.coroutines.delay
-import kotlin.math.roundToInt
+import java.io.ByteArrayInputStream
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -105,17 +91,11 @@ fun KaraokePlayerScreen(
     relatedQueue: List<KaraokeSong>,
     isFavorite: Boolean,
     playlists: List<PlaylistEntity>,
-    vocalSettings: VocalSettings,
-    usbMicStatus: UsbMicStatus,
-    presetHudMessage: String?,
     onBack: () -> Unit,
     onToggleFavorite: () -> Unit,
     onAddSongToPlaylist: (Long) -> Unit,
     onPlayNextSong: (KaraokeSong) -> Unit,
     onUpdatePosition: (Int) -> Unit,
-    onApplyPreset: (VocalPreset) -> Unit,
-    onClearPresetHud: () -> Unit,
-    onUpdateVocalSettings: ((VocalSettings) -> VocalSettings) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -123,8 +103,8 @@ fun KaraokePlayerScreen(
     var currentSeconds by remember { mutableIntStateOf(song.lastPositionSeconds) }
     var totalSeconds by remember { mutableIntStateOf(song.durationSeconds.coerceAtLeast(1)) }
     var showControls by remember { mutableStateOf(true) }
-    var showMicDrawer by remember { mutableStateOf(false) }
     var showPlaylistDialog by remember { mutableStateOf(false) }
+    var embedErrorCode by remember { mutableStateOf<Int?>(null) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
     val playPauseFocusRequester = remember { FocusRequester() }
@@ -136,15 +116,6 @@ fun KaraokePlayerScreen(
         }
     }
 
-    // Auto-dismiss 0-9 preset HUD toast
-    LaunchedEffect(presetHudMessage) {
-        if (presetHudMessage != null) {
-            delay(2400)
-            onClearPresetHud()
-        }
-    }
-
-    // Periodically save playback position
     LaunchedEffect(song.videoId, currentSeconds) {
         if (currentSeconds > 0 && currentSeconds % 5 == 0) {
             onUpdatePosition(currentSeconds)
@@ -152,10 +123,10 @@ fun KaraokePlayerScreen(
     }
 
     BackHandler {
-        when {
-            showMicDrawer -> showMicDrawer = false
-            showPlaylistDialog -> showPlaylistDialog = false
-            else -> onBack()
+        if (showPlaylistDialog) {
+            showPlaylistDialog = false
+        } else {
+            onBack()
         }
     }
 
@@ -184,13 +155,6 @@ fun KaraokePlayerScreen(
             .onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown) {
                     showControls = true
-                    val digit = mapKeyToDigit(event.key)
-                    if (digit != null) {
-                        VocalPreset.fromKeyNumber(digit)?.let { preset ->
-                            onApplyPreset(preset)
-                        }
-                        return@onPreviewKeyEvent true
-                    }
                     if (event.key == Key.MediaPlayPause) {
                         togglePlayPause()
                         return@onPreviewKeyEvent true
@@ -199,7 +163,7 @@ fun KaraokePlayerScreen(
                 false
             }
     ) {
-        // Official YouTube IFrame Player WebView
+        // Ad-free YouTube IFrame Player WebView
         AndroidView(
             factory = { ctx ->
                 WebView(ctx).apply {
@@ -208,24 +172,51 @@ fun KaraokePlayerScreen(
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
                     setBackgroundColor(android.graphics.Color.BLACK)
+                    setLayerType(View.LAYER_TYPE_HARDWARE, null)
+                    CookieManager.getInstance().setAcceptCookie(true)
+                    CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.mediaPlaybackRequiresUserGesture = false
+                    settings.javaScriptCanOpenWindowsAutomatically = true
                     settings.cacheMode = WebSettings.LOAD_DEFAULT
                     webChromeClient = WebChromeClient()
-                    webViewClient = WebViewClient()
+                    webViewClient = object : WebViewClient() {
+                        override fun shouldInterceptRequest(
+                            view: WebView?,
+                            request: WebResourceRequest?
+                        ): WebResourceResponse? {
+                            val url = request?.url?.toString().orEmpty()
+                            if (isAdUrl(url)) {
+                                return WebResourceResponse(
+                                    "text/plain",
+                                    "utf-8",
+                                    ByteArrayInputStream(ByteArray(0))
+                                )
+                            }
+                            return super.shouldInterceptRequest(view, request)
+                        }
+                    }
 
                     addJavascriptInterface(
                         object {
                             @JavascriptInterface
                             fun onStateChange(state: Int) {
                                 isPlaying = (state == 1 || state == 3)
+                                if (state == 1) {
+                                    embedErrorCode = null
+                                }
                             }
 
                             @JavascriptInterface
                             fun onTimeUpdate(cur: Int, dur: Int) {
                                 currentSeconds = cur
                                 if (dur > 0) totalSeconds = dur
+                            }
+
+                            @JavascriptInterface
+                            fun onPlayerError(code: Int) {
+                                embedErrorCode = code
                             }
                         },
                         "KoroBridge"
@@ -237,7 +228,8 @@ fun KaraokePlayerScreen(
                 val html = buildYouTubeIFrameHtml(song.videoId, song.lastPositionSeconds)
                 if (wv.tag != song.videoId) {
                     wv.tag = song.videoId
-                    wv.loadDataWithBaseURL("https://www.youtube.com", html, "text/html", "UTF-8", null)
+                    embedErrorCode = null
+                    wv.loadDataWithBaseURL("https://korokoro.tv", html, "text/html", "UTF-8", null)
                 }
             },
             modifier = Modifier.fillMaxSize()
@@ -250,7 +242,81 @@ fun KaraokePlayerScreen(
             }
         }
 
-        // Top & Bottom Gradient Scrim when controls are visible
+        // Graceful Embed Error (150 / 152 / 101) Recovery Overlay
+        val errCode = embedErrorCode
+        if (errCode != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.88f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    modifier = Modifier
+                        .width(520.dp)
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(TvSurface)
+                        .border(1.5.dp, KaraokeCrimson, RoundedCornerShape(22.dp))
+                        .padding(28.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Text(
+                        text = "Video Tidak Dapat Diputar Langsung (Kode $errCode)",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = TextPrimary
+                    )
+                    Text(
+                        text = "Pemilik video membatasi pemutaran embed di luar aplikasi YouTube. Pilih lagu karaoke lain atau tonton langsung di aplikasi YouTube.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextSecondary
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val nextSong = relatedQueue.firstOrNull()
+                        if (nextSong != null) {
+                            TvFocusableSurface(
+                                onClick = { onPlayNextSong(nextSong) },
+                                shape = RoundedCornerShape(22.dp),
+                                containerColor = KaraokeCrimson,
+                                focusedContainerColor = KaraokeCrimson
+                            ) {
+                                Text(
+                                    text = "Putar Lagu Berikutnya",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = Color.White,
+                                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp)
+                                )
+                            }
+                        }
+                        TvFocusableSurface(
+                            onClick = {
+                                val intent = Intent(
+                                    Intent.ACTION_VIEW,
+                                    Uri.parse("https://www.youtube.com/watch?v=${song.videoId}")
+                                )
+                                context.startActivity(intent)
+                            },
+                            shape = RoundedCornerShape(22.dp),
+                            containerColor = TvSurfaceElevated,
+                            focusedContainerColor = KaraokeCyan
+                        ) { isFocused ->
+                            Text(
+                                text = "Tonton di YouTube",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = if (isFocused) TvBackground else TextPrimary,
+                                modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Top & Bottom Gradient Scrim
         AnimatedVisibility(
             visible = showControls,
             enter = fadeIn(),
@@ -272,7 +338,7 @@ fun KaraokePlayerScreen(
             )
         }
 
-        // Top Bar: Back to Home, Song Info, Active Vocal Preset & Mic Drawer Trigger
+        // Top Bar
         AnimatedVisibility(
             visible = showControls,
             enter = fadeIn(),
@@ -283,129 +349,52 @@ fun KaraokePlayerScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 28.dp, vertical = 20.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    TvFocusableSurface(
-                        onClick = onBack,
-                        testTag = "player_back_button",
-                        shape = RoundedCornerShape(24.dp),
-                        containerColor = TvSurfaceElevated.copy(alpha = 0.85f),
-                        focusedContainerColor = KaraokeCrimson
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Kembali ke Beranda",
-                                tint = Color.White,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Beranda",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = Color.White
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.width(18.dp))
-
-                    Column {
-                        Text(
-                            text = song.title,
-                            style = MaterialTheme.typography.headlineMedium,
-                            color = TextPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = "${song.singer} • Tekan tombol angka 0–9 di remote untuk ganti efek vokal",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = TextSecondary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.width(16.dp))
-
-                // Active Vocal Preset & Mic Settings Button
                 TvFocusableSurface(
-                    onClick = { showMicDrawer = !showMicDrawer },
-                    testTag = "player_mic_settings_button",
+                    onClick = onBack,
+                    testTag = "player_back_button",
                     shape = RoundedCornerShape(24.dp),
-                    containerColor = TvSurfaceElevated.copy(alpha = 0.9f),
-                    focusedContainerColor = KaraokeCyan
-                ) { isFocused ->
+                    containerColor = TvSurfaceElevated.copy(alpha = 0.85f),
+                    focusedContainerColor = KaraokeCrimson
+                ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(10.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    if (vocalSettings.micMonitorEnabled) KaraokeEmerald else TextSecondary
-                                )
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
                         Icon(
-                            imageVector = Icons.Filled.Mic,
-                            contentDescription = "Pengaturan Mikrofon",
-                            tint = if (isFocused) TvBackground else KaraokeCyan,
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Kembali ke Beranda",
+                            tint = Color.White,
                             modifier = Modifier.size(20.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "[${vocalSettings.preset.keyNumber}] ${vocalSettings.preset.displayName}",
+                            text = "Beranda",
                             style = MaterialTheme.typography.labelLarge,
-                            color = if (isFocused) TvBackground else TextPrimary
+                            color = Color.White
                         )
                     }
                 }
-            }
-        }
 
-        // Numeric 0-9 Remote Preset HUD Notification
-        AnimatedVisibility(
-            visible = presetHudMessage != null,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 84.dp, end = 28.dp)
-        ) {
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(TvSurface.copy(alpha = 0.94f))
-                    .border(1.5.dp, KaraokeCyan, RoundedCornerShape(16.dp))
-                    .padding(horizontal = 18.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.GraphicEq,
-                    contentDescription = null,
-                    tint = KaraokeCyan,
-                    modifier = Modifier.size(22.dp)
-                )
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(
-                    text = presetHudMessage.orEmpty(),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = TextPrimary
-                )
+                Spacer(modifier = Modifier.width(18.dp))
+
+                Column {
+                    Text(
+                        text = song.title,
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = song.singer,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
 
@@ -421,7 +410,6 @@ fun KaraokePlayerScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 28.dp, vertical = 22.dp)
             ) {
-                // Progress Bar
                 val progress = (currentSeconds.toFloat() / totalSeconds.coerceAtLeast(1).toFloat())
                     .coerceIn(0f, 1f)
                 LinearProgressIndicator(
@@ -452,7 +440,6 @@ fun KaraokePlayerScreen(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // Action Buttons Row
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -462,7 +449,6 @@ fun KaraokePlayerScreen(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Play / Pause
                         TvFocusableSurface(
                             onClick = { togglePlayPause() },
                             testTag = "player_play_pause_button",
@@ -483,7 +469,6 @@ fun KaraokePlayerScreen(
                             }
                         }
 
-                        // Replay 10s
                         TvFocusableSurface(
                             onClick = { seekBy(-10) },
                             shape = CircleShape,
@@ -501,7 +486,6 @@ fun KaraokePlayerScreen(
                             }
                         }
 
-                        // Forward 10s
                         TvFocusableSurface(
                             onClick = { seekBy(10) },
                             shape = CircleShape,
@@ -519,7 +503,6 @@ fun KaraokePlayerScreen(
                             }
                         }
 
-                        // Next Song in Queue
                         val nextSong = relatedQueue.firstOrNull()
                         if (nextSong != null) {
                             TvFocusableSurface(
@@ -553,7 +536,6 @@ fun KaraokePlayerScreen(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Favorite Toggle
                         TvFocusableSurface(
                             onClick = onToggleFavorite,
                             testTag = "player_favorite_button",
@@ -580,7 +562,6 @@ fun KaraokePlayerScreen(
                             }
                         }
 
-                        // Add to Playlist
                         TvFocusableSurface(
                             onClick = { showPlaylistDialog = true },
                             testTag = "player_add_playlist_button",
@@ -607,7 +588,6 @@ fun KaraokePlayerScreen(
                             }
                         }
 
-                        // Open in Official YouTube App (Fallback)
                         TvFocusableSurface(
                             onClick = {
                                 val intent = Intent(
@@ -638,270 +618,6 @@ fun KaraokePlayerScreen(
                                 )
                             }
                         }
-                    }
-                }
-            }
-        }
-
-        // Slide-over Microphone & Vocal Effects Drawer
-        AnimatedVisibility(
-            visible = showMicDrawer,
-            enter = slideInHorizontally { it } + fadeIn(),
-            exit = slideOutHorizontally { it } + fadeOut(),
-            modifier = Modifier.align(Alignment.CenterEnd)
-        ) {
-            Column(
-                modifier = Modifier
-                    .width(420.dp)
-                    .fillMaxHeight()
-                    .background(TvSurface.copy(alpha = 0.96f))
-                    .border(1.dp, KaraokeCyan.copy(alpha = 0.4f))
-                    .padding(22.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(
-                            text = "Mikrofon & Efek Vokal",
-                            style = MaterialTheme.typography.titleLarge,
-                            color = TextPrimary
-                        )
-                        Text(
-                            text = usbMicStatus.deviceName,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = KaraokeCyan
-                        )
-                    }
-                    TvFocusableSurface(
-                        onClick = { showMicDrawer = false },
-                        shape = CircleShape,
-                        containerColor = TvSurfaceElevated,
-                        modifier = Modifier.size(40.dp)
-                    ) {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Filled.Close,
-                                contentDescription = "Tutup Panel Mic",
-                                tint = Color.White,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    contentPadding = PaddingValues(bottom = 16.dp)
-                ) {
-                    // Presets 0-9
-                    item {
-                        Text(
-                            text = "Preset Cepat (Tombol Remote 0–9)",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = TextSecondary
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(VocalPreset.entries, key = { it.keyNumber }) { preset ->
-                                val selected = vocalSettings.preset == preset
-                                TvFocusableSurface(
-                                    onClick = { onApplyPreset(preset) },
-                                    shape = RoundedCornerShape(12.dp),
-                                    containerColor = if (selected) KaraokeCrimson else TvSurfaceElevated,
-                                    focusedContainerColor = KaraokeCrimson
-                                ) {
-                                    Text(
-                                        text = "[${preset.keyNumber}] ${preset.displayName}",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = Color.White,
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // Mic Monitor ON/OFF
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(TvSurfaceElevated)
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Mic Monitor (Output TV)",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = TextPrimary
-                            )
-                            Switch(
-                                checked = vocalSettings.micMonitorEnabled,
-                                onCheckedChange = { enabled ->
-                                    onUpdateVocalSettings { it.copy(micMonitorEnabled = enabled) }
-                                },
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = Color.White,
-                                    checkedTrackColor = KaraokeCrimson
-                                )
-                            )
-                        }
-                    }
-
-                    item {
-                        AudioStepperRow(
-                            label = "Monitor Vol",
-                            valueText = "${(vocalSettings.micMonitorVolume * 100).roundToInt()}%",
-                            onDecrease = {
-                                onUpdateVocalSettings {
-                                    it.copy(micMonitorVolume = (it.micMonitorVolume - 0.1f).coerceIn(0f, 1f))
-                                }
-                            },
-                            onIncrease = {
-                                onUpdateVocalSettings {
-                                    it.copy(micMonitorVolume = (it.micMonitorVolume + 0.1f).coerceIn(0f, 1f))
-                                }
-                            }
-                        )
-                    }
-
-                    item {
-                        AudioStepperRow(
-                            label = "Mic Volume",
-                            valueText = "${(vocalSettings.micVolume * 100).roundToInt()}%",
-                            onDecrease = {
-                                onUpdateVocalSettings {
-                                    it.copy(micVolume = (it.micVolume - 0.1f).coerceIn(0f, 2f))
-                                }
-                            },
-                            onIncrease = {
-                                onUpdateVocalSettings {
-                                    it.copy(micVolume = (it.micVolume + 0.1f).coerceIn(0f, 2f))
-                                }
-                            }
-                        )
-                    }
-
-                    item {
-                        AudioStepperRow(
-                            label = "Echo",
-                            valueText = "${(vocalSettings.echoLevel * 100).roundToInt()}%",
-                            onDecrease = {
-                                onUpdateVocalSettings {
-                                    it.copy(
-                                        preset = VocalPreset.CUSTOM_EFFECT,
-                                        echoLevel = (it.echoLevel - 0.1f).coerceIn(0f, 1f)
-                                    )
-                                }
-                            },
-                            onIncrease = {
-                                onUpdateVocalSettings {
-                                    it.copy(
-                                        preset = VocalPreset.CUSTOM_EFFECT,
-                                        echoLevel = (it.echoLevel + 0.1f).coerceIn(0f, 1f)
-                                    )
-                                }
-                            }
-                        )
-                    }
-
-                    item {
-                        AudioStepperRow(
-                            label = "Reverb",
-                            valueText = "${(vocalSettings.reverbLevel * 100).roundToInt()}%",
-                            onDecrease = {
-                                onUpdateVocalSettings {
-                                    it.copy(
-                                        preset = VocalPreset.CUSTOM_EFFECT,
-                                        reverbLevel = (it.reverbLevel - 0.1f).coerceIn(0f, 1f)
-                                    )
-                                }
-                            },
-                            onIncrease = {
-                                onUpdateVocalSettings {
-                                    it.copy(
-                                        preset = VocalPreset.CUSTOM_EFFECT,
-                                        reverbLevel = (it.reverbLevel + 0.1f).coerceIn(0f, 1f)
-                                    )
-                                }
-                            }
-                        )
-                    }
-
-                    item {
-                        AudioStepperRow(
-                            label = "Bass",
-                            valueText = "${vocalSettings.bassDb.roundToInt()} dB",
-                            onDecrease = {
-                                onUpdateVocalSettings {
-                                    it.copy(
-                                        preset = VocalPreset.CUSTOM_EFFECT,
-                                        bassDb = (it.bassDb - 2f).coerceIn(-12f, 12f)
-                                    )
-                                }
-                            },
-                            onIncrease = {
-                                onUpdateVocalSettings {
-                                    it.copy(
-                                        preset = VocalPreset.CUSTOM_EFFECT,
-                                        bassDb = (it.bassDb + 2f).coerceIn(-12f, 12f)
-                                    )
-                                }
-                            }
-                        )
-                    }
-
-                    item {
-                        AudioStepperRow(
-                            label = "Treble",
-                            valueText = "${vocalSettings.trebleDb.roundToInt()} dB",
-                            onDecrease = {
-                                onUpdateVocalSettings {
-                                    it.copy(
-                                        preset = VocalPreset.CUSTOM_EFFECT,
-                                        trebleDb = (it.trebleDb - 2f).coerceIn(-12f, 12f)
-                                    )
-                                }
-                            },
-                            onIncrease = {
-                                onUpdateVocalSettings {
-                                    it.copy(
-                                        preset = VocalPreset.CUSTOM_EFFECT,
-                                        trebleDb = (it.trebleDb + 2f).coerceIn(-12f, 12f)
-                                    )
-                                }
-                            }
-                        )
-                    }
-
-                    item {
-                        AudioStepperRow(
-                            label = "Pitch",
-                            valueText = "${if (vocalSettings.pitchSemitones > 0) "+" else ""}${vocalSettings.pitchSemitones}",
-                            onDecrease = {
-                                onUpdateVocalSettings {
-                                    it.copy(
-                                        preset = VocalPreset.CUSTOM_EFFECT,
-                                        pitchSemitones = (it.pitchSemitones - 1).coerceIn(-6, 6)
-                                    )
-                                }
-                            },
-                            onIncrease = {
-                                onUpdateVocalSettings {
-                                    it.copy(
-                                        preset = VocalPreset.CUSTOM_EFFECT,
-                                        pitchSemitones = (it.pitchSemitones + 1).coerceIn(-6, 6)
-                                    )
-                                }
-                            }
-                        )
                     }
                 }
             }
@@ -979,20 +695,17 @@ fun KaraokePlayerScreen(
     }
 }
 
-private fun mapKeyToDigit(key: Key): Int? {
-    return when (key) {
-        Key.Zero, Key.NumPad0 -> 0
-        Key.One, Key.NumPad1 -> 1
-        Key.Two, Key.NumPad2 -> 2
-        Key.Three, Key.NumPad3 -> 3
-        Key.Four, Key.NumPad4 -> 4
-        Key.Five, Key.NumPad5 -> 5
-        Key.Six, Key.NumPad6 -> 6
-        Key.Seven, Key.NumPad7 -> 7
-        Key.Eight, Key.NumPad8 -> 8
-        Key.Nine, Key.NumPad9 -> 9
-        else -> null
-    }
+private fun isAdUrl(url: String): Boolean {
+    if (url.isEmpty()) return false
+    val lower = url.lowercase()
+    return lower.contains("doubleclick.net") ||
+        lower.contains("googlesyndication.com") ||
+        lower.contains("googleadservices.com") ||
+        lower.contains("adservice.google.") ||
+        lower.contains("/pagead/") ||
+        lower.contains("/api/stats/ads") ||
+        lower.contains("/get_midroll_") ||
+        lower.contains("/ptracking")
 }
 
 private fun formatSeconds(totalSec: Int): String {
@@ -1010,6 +723,7 @@ private fun buildYouTubeIFrameHtml(videoId: String, startSeconds: Int): String {
             <style>
                 html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
                 #player { width: 100%; height: 100%; }
+                .ytp-ad-module, .ytp-ad-overlay-container, .ytp-ad-text-overlay { display: none !important; }
             </style>
         </head>
         <body>
@@ -1019,6 +733,7 @@ private fun buildYouTubeIFrameHtml(videoId: String, startSeconds: Int): String {
                 var ytPlayer;
                 function onYouTubeIframeAPIReady() {
                     ytPlayer = new YT.Player('player', {
+                        host: 'https://www.youtube-nocookie.com',
                         videoId: '$videoId',
                         playerVars: {
                             'autoplay': 1,
@@ -1026,12 +741,18 @@ private fun buildYouTubeIFrameHtml(videoId: String, startSeconds: Int): String {
                             'rel': 0,
                             'modestbranding': 1,
                             'iv_load_policy': 3,
+                            'cc_load_policy': 0,
                             'playsinline': 1,
+                            'enablejsapi': 1,
+                            'origin': 'https://korokoro.tv',
                             'start': $startSeconds
                         },
                         events: {
                             'onStateChange': function(e) {
                                 if (window.KoroBridge) KoroBridge.onStateChange(e.data);
+                            },
+                            'onError': function(e) {
+                                if (window.KoroBridge) KoroBridge.onPlayerError(e.data);
                             }
                         }
                     });

@@ -1,11 +1,14 @@
 package com.example
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -19,6 +22,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.model.SidebarDestination
 import com.example.ui.MainViewModel
@@ -44,11 +48,21 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         setContent {
+            val startupMicPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.RequestPermission()
+            ) { _ -> }
+
+            androidx.compose.runtime.LaunchedEffect(Unit) {
+                if (ContextCompat.checkSelfPermission(
+                        this@MainActivity,
+                        Manifest.permission.RECORD_AUDIO
+                    ) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    startupMicPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                }
+            }
             KoroKoroTvTheme {
                 val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-                val vocalSettings by viewModel.vocalSettings.collectAsStateWithLifecycle()
-                val voiceLanguage by viewModel.voiceLanguage.collectAsStateWithLifecycle()
-                val usbMicStatus by viewModel.usbMicStatus.collectAsStateWithLifecycle()
                 val voiceSearchState by viewModel.voiceSearchState.collectAsStateWithLifecycle()
                 val favorites by viewModel.favorites.collectAsStateWithLifecycle()
                 val history by viewModel.history.collectAsStateWithLifecycle()
@@ -58,7 +72,6 @@ class MainActivity : ComponentActivity() {
                     favorites.map { it.videoId }.toSet()
                 }
 
-                // Handle Back button when on non-home destination
                 BackHandler(
                     enabled = uiState.activePlayerSong == null &&
                         uiState.currentDestination != SidebarDestination.HOME
@@ -79,9 +92,6 @@ class MainActivity : ComponentActivity() {
                             relatedQueue = uiState.relatedQueue,
                             isFavorite = favoriteIds.contains(activeSong.videoId),
                             playlists = playlists,
-                            vocalSettings = vocalSettings,
-                            usbMicStatus = usbMicStatus,
-                            presetHudMessage = uiState.presetHudMessage,
                             onBack = { viewModel.closePlayer() },
                             onToggleFavorite = {
                                 viewModel.toggleFavorite(
@@ -97,22 +107,13 @@ class MainActivity : ComponentActivity() {
                             },
                             onUpdatePosition = { pos ->
                                 viewModel.updatePlaybackPosition(activeSong.videoId, pos)
-                            },
-                            onApplyPreset = { preset ->
-                                viewModel.applyVocalPreset(preset)
-                            },
-                            onClearPresetHud = { viewModel.clearPresetHud() },
-                            onUpdateVocalSettings = { transform ->
-                                viewModel.updateVocalSettings(transform)
                             }
                         )
                     } else {
                         Row(modifier = Modifier.fillMaxSize()) {
-                            // Left Vertical Navigation Sidebar (auto-collapses when focus enters content)
                             SidebarNav(
                                 currentDestination = uiState.currentDestination,
                                 isExpanded = uiState.isSidebarFocused,
-                                isUsbMicConnected = usbMicStatus.isUsbConnected,
                                 onSidebarFocusChanged = { focused ->
                                     viewModel.setSidebarFocused(focused)
                                 },
@@ -121,7 +122,6 @@ class MainActivity : ComponentActivity() {
                                 }
                             )
 
-                            // Main Content Area on the Right
                             Column(
                                 modifier = Modifier
                                     .weight(1f)
@@ -169,7 +169,7 @@ class MainActivity : ComponentActivity() {
                                                 isSearching = uiState.isSearching,
                                                 showVoiceOverlay = uiState.showVoiceOverlay,
                                                 voiceSearchState = voiceSearchState,
-                                                voiceLanguage = voiceLanguage,
+                                                voiceLanguage = uiState.voiceLanguage,
                                                 favoriteIds = favoriteIds,
                                                 voiceSearchManager = viewModel.voiceSearchManager,
                                                 onQueryChange = { viewModel.updateSearchQuery(it) },
@@ -239,14 +239,8 @@ class MainActivity : ComponentActivity() {
 
                                         SidebarDestination.SETTINGS -> {
                                             SettingsScreen(
-                                                vocalSettings = vocalSettings,
-                                                usbMicStatus = usbMicStatus,
-                                                voiceLanguage = voiceLanguage,
+                                                voiceLanguage = uiState.voiceLanguage,
                                                 isLiveYouTubeApi = uiState.isLiveYouTubeApi,
-                                                onApplyPreset = { viewModel.applyVocalPreset(it) },
-                                                onUpdateVocalSettings = { viewModel.updateVocalSettings(it) },
-                                                onToggleEngine = { viewModel.toggleAudioEngine() },
-                                                onRefreshUsbMic = { viewModel.usbAudioEngine.refreshUsbMicDetection() },
                                                 onSetVoiceLanguage = { viewModel.setVoiceLanguage(it) }
                                             )
                                         }
@@ -261,7 +255,6 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        // Support Android TV Remote Microphone / Voice Assist / Search hardware button
         if (keyCode == KeyEvent.KEYCODE_VOICE_ASSIST ||
             keyCode == KeyEvent.KEYCODE_SEARCH ||
             keyCode == KeyEvent.KEYCODE_MEDIA_RECORD

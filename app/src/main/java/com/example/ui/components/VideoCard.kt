@@ -62,7 +62,11 @@ fun KaraokeVideoCard(
                     .background(Color(0xFF1E1E2A))
             ) {
                 AsyncImage(
-                    model = song.thumbnailUrl,
+                    model = coil.request.ImageRequest.Builder(androidx.compose.ui.platform.LocalContext.current)
+                        .data(song.thumbnailUrl)
+                        .size(480, 270)
+                        .crossfade(120)
+                        .build(),
                     contentDescription = song.title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()

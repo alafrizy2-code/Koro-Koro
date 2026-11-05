@@ -1,12 +1,9 @@
 package com.example.ui.components
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -74,7 +71,6 @@ import com.example.model.SidebarDestination
 import com.example.ui.theme.DividerSubtle
 import com.example.ui.theme.KaraokeCrimson
 import com.example.ui.theme.KaraokeCyan
-import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.theme.TvSidebarBg
@@ -84,14 +80,13 @@ import com.example.ui.theme.TvSurfaceElevated
 fun SidebarNav(
     currentDestination: SidebarDestination,
     isExpanded: Boolean,
-    isUsbMicConnected: Boolean,
     onSidebarFocusChanged: (Boolean) -> Unit,
     onSelectDestination: (SidebarDestination) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val sidebarWidth by animateDpAsState(
-        targetValue = if (isExpanded) 236.dp else 78.dp,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        targetValue = if (isExpanded) 232.dp else 76.dp,
+        animationSpec = tween(durationMillis = 150, easing = FastOutSlowInEasing),
         label = "sidebar_width"
     )
 
@@ -119,109 +114,71 @@ fun SidebarNav(
             .onFocusChanged { state ->
                 onSidebarFocusChanged(state.hasFocus)
             }
-            .padding(vertical = 20.dp, horizontal = 12.dp),
-        verticalArrangement = Arrangement.SpaceBetween
+            .padding(vertical = 20.dp, horizontal = 12.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            // Brand Header
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 6.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(
-                            Brush.linearGradient(
-                                listOf(KaraokeCrimson, Color(0xFF9C27B0))
-                            )
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Mic,
-                        contentDescription = "Koro Koro TV",
-                        tint = Color.White,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-
-                AnimatedVisibility(
-                    visible = isExpanded,
-                    enter = fadeIn(),
-                    exit = fadeOut()
-                ) {
-                    Column(modifier = Modifier.padding(start = 12.dp)) {
-                        Text(
-                            text = "Koro Koro",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = TextPrimary,
-                            maxLines = 1
-                        )
-                        Text(
-                            text = "KARAOKE TV",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = KaraokeCyan,
-                            letterSpacing = androidx.compose.ui.unit.TextUnit(1.5f, androidx.compose.ui.unit.TextUnitType.Sp)
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            SidebarDestination.entries.forEach { dest ->
-                val isSelected = currentDestination == dest
-                val itemModifier = if (dest == SidebarDestination.HOME) {
-                    Modifier.focusRequester(homeFocusRequester)
-                } else {
-                    Modifier
-                }
-                SidebarNavItem(
-                    destination = dest,
-                    isSelected = isSelected,
-                    isExpanded = isExpanded,
-                    onClick = { onSelectDestination(dest) },
-                    modifier = itemModifier
-                )
-            }
-        }
-
-        // Bottom USB Mic Status Pill
+        // Brand Header
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(TvSurfaceElevated.copy(alpha = 0.7f))
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = if (isExpanded) Arrangement.Start else Arrangement.Center
+                .padding(horizontal = 6.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(10.dp)
+                    .size(40.dp)
                     .clip(CircleShape)
-                    .background(if (isUsbMicConnected) Color(0xFF00E676) else TextMuted)
-            )
-            if (isExpanded) {
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(
-                    text = if (isUsbMicConnected) "USB Mic Aktif" else "Mic Siap",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (isUsbMicConnected) Color(0xFF00E676) else TextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    .background(
+                        Brush.linearGradient(
+                            listOf(KaraokeCrimson, Color(0xFF9C27B0))
+                        )
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Mic,
+                    contentDescription = "Koro Koro TV",
+                    tint = Color.White,
+                    modifier = Modifier.size(22.dp)
                 )
             }
+
+            if (isExpanded) {
+                Column(modifier = Modifier.padding(start = 12.dp)) {
+                    Text(
+                        text = "Koro Koro",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = TextPrimary,
+                        maxLines = 1
+                    )
+                    Text(
+                        text = "KARAOKE TV",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = KaraokeCyan,
+                        letterSpacing = androidx.compose.ui.unit.TextUnit(1.5f, androidx.compose.ui.unit.TextUnitType.Sp)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        SidebarDestination.entries.forEach { dest ->
+            val isSelected = currentDestination == dest
+            val itemModifier = if (dest == SidebarDestination.HOME) {
+                Modifier.focusRequester(homeFocusRequester)
+            } else {
+                Modifier
+            }
+            SidebarNavItem(
+                destination = dest,
+                isSelected = isSelected,
+                isExpanded = isExpanded,
+                onClick = { onSelectDestination(dest) },
+                modifier = itemModifier
+            )
         }
     }
 }
@@ -243,6 +200,7 @@ private fun SidebarNavItem(
             isSelected -> TvSurfaceElevated
             else -> Color.Transparent
         },
+        animationSpec = tween(durationMillis = 110, easing = FastOutSlowInEasing),
         label = "nav_item_bg"
     )
     val contentColor by animateColorAsState(
@@ -251,6 +209,7 @@ private fun SidebarNavItem(
             isSelected -> KaraokeCrimson
             else -> TextSecondary
         },
+        animationSpec = tween(durationMillis = 110, easing = FastOutSlowInEasing),
         label = "nav_item_fg"
     )
 

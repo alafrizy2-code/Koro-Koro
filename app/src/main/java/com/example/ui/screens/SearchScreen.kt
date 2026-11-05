@@ -1,7 +1,10 @@
 package com.example.ui.screens
 
 import android.Manifest
+import android.app.Activity
 import android.content.pm.PackageManager
+import android.speech.RecognizerIntent
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -12,6 +15,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -54,13 +58,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -101,16 +108,32 @@ fun SearchScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var permissionDeniedMessage by remember { mutableStateOf<String?>(null) }
+
+    // Native Android TV System Voice Intent Launcher (works with TV remote mic even without app RECORD_AUDIO)
+    val systemVoiceLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val matches = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            val spoken = matches?.firstOrNull()?.trim().orEmpty()
+            if (spoken.isNotEmpty()) {
+                voiceSearchManager.setDirectResult(spoken, voiceLanguage)
+            }
+        }
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            permissionDeniedMessage = null
             voiceSearchManager.startListening(voiceLanguage)
         } else {
-            permissionDeniedMessage = "Izin mikrofon (RECORD_AUDIO) ditolak. Aktifkan izin mikrofon di Pengaturan Android TV atau gunakan pencarian teks."
+            // Fallback to Android TV's built-in system voice recognizer
+            try {
+                systemVoiceLauncher.launch(voiceSearchManager.createSystemVoiceIntent(voiceLanguage))
+            } catch (_: Exception) {
+                voiceSearchManager.startListening(voiceLanguage)
+            }
         }
     }
 
@@ -120,14 +143,12 @@ fun SearchScreen(
             Manifest.permission.RECORD_AUDIO
         ) == PackageManager.PERMISSION_GRANTED
         if (hasPerm) {
-            permissionDeniedMessage = null
             voiceSearchManager.startListening(voiceLanguage)
         } else {
             permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
 
-    // Automatically start listening when Voice Overlay opens
     LaunchedEffect(showVoiceOverlay) {
         if (showVoiceOverlay && voiceSearchState is VoiceSearchState.Idle) {
             triggerVoiceRecognition()
@@ -152,7 +173,6 @@ fun SearchScreen(
                 .fillMaxSize()
                 .padding(horizontal = 28.dp, vertical = 12.dp)
         ) {
-            // Search Input Row + Voice Search Button + Karaoke Filter
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -236,7 +256,6 @@ fun SearchScreen(
                     }
                 }
 
-                // Voice Search Button
                 TvFocusableSurface(
                     onClick = {
                         onOpenVoiceOverlay()
@@ -269,7 +288,6 @@ fun SearchScreen(
                     }
                 }
 
-                // Karaoke Filter Chip
                 TvFocusableSurface(
                     onClick = onToggleKaraokeFilter,
                     testTag = "karaoke_filter_toggle",
@@ -302,10 +320,7 @@ fun SearchScreen(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Quick Keyword Chips
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(quickKeywords) { kw ->
                     TvFocusableSurface(
                         onClick = {
@@ -328,7 +343,6 @@ fun SearchScreen(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            // Results Grid
             if (isSearching) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -380,17 +394,21 @@ fun SearchScreen(
             }
         }
 
-        // Voice Search Modal Overlay
         AnimatedVisibility(visible = showVoiceOverlay) {
             VoiceSearchOverlayPanel(
                 state = voiceSearchState,
                 voiceLanguage = voiceLanguage,
-                permissionDeniedMessage = permissionDeniedMessage,
                 onSelectLanguage = { lang ->
                     onSetVoiceLanguage(lang)
                     voiceSearchManager.startListening(lang)
                 },
                 onRetryListening = { triggerVoiceRecognition() },
+                onLaunchSystemVoice = {
+                    try {
+                        systemVoiceLauncher.launch(voiceSearchManager.createSystemVoiceIntent(voiceLanguage))
+                    } catch (_: Exception) {
+                    }
+                },
                 onConfirmSearch = { finalText ->
                     onQueryChange(finalText)
                     onSearch(finalText)
@@ -401,24 +419,37 @@ fun SearchScreen(
     }
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun VoiceSearchOverlayPanel(
     state: VoiceSearchState,
     voiceLanguage: String,
-    permissionDeniedMessage: String?,
     onSelectLanguage: (String) -> Unit,
     onRetryListening: () -> Unit,
+    onLaunchSystemVoice: () -> Unit,
     onConfirmSearch: (String) -> Unit,
     onClose: () -> Unit
 ) {
     var editableRecognizedText by remember { mutableStateOf("") }
     var userEditedManually by remember { mutableStateOf(false) }
 
+    val retryFocusRequester = remember { FocusRequester() }
+
+    BackHandler {
+        onClose()
+    }
+
+    LaunchedEffect(Unit) {
+        try {
+            retryFocusRequester.requestFocus()
+        } catch (_: Exception) {
+        }
+    }
+
     LaunchedEffect(state) {
         if (state is VoiceSearchState.ResultReady) {
             editableRecognizedText = state.recognizedText
             userEditedManually = false
-            // Auto-execute search if recognition is clear and user hasn't edited
             if (state.isConfident) {
                 delay(1200)
                 if (!userEditedManually) {
@@ -431,7 +462,7 @@ private fun VoiceSearchOverlayPanel(
     val infiniteTransition = rememberInfiniteTransition(label = "voice_pulse")
     val pulseScale by infiniteTransition.animateFloat(
         initialValue = 1f,
-        targetValue = 1.28f,
+        targetValue = 1.24f,
         animationSpec = infiniteRepeatable(
             animation = tween(700),
             repeatMode = RepeatMode.Reverse
@@ -442,37 +473,31 @@ private fun VoiceSearchOverlayPanel(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.84f))
+            .background(Color.Black.copy(alpha = 0.86f))
             .padding(32.dp),
         contentAlignment = Alignment.Center
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth(0.72f)
+                .fillMaxWidth(0.74f)
                 .clip(RoundedCornerShape(24.dp))
                 .background(TvSurface)
                 .border(1.5.dp, KaraokeCyan.copy(alpha = 0.5f), RoundedCornerShape(24.dp))
+                .focusGroup()
+                .focusProperties { exit = { FocusRequester.Cancel } }
                 .padding(28.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Header + Language Toggle (Indonesia / English)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
-                    Text(
-                        text = "Pencarian Suara Koro Koro TV",
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = TextPrimary
-                    )
-                    Text(
-                        text = "Terisolasi dari Mic Karaoke USB (tidak mengubah efek vokal)",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = KaraokeEmerald
-                    )
-                }
+                Text(
+                    text = "Pencarian Suara Koro Koro TV",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = TextPrimary
+                )
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TvFocusableSurface(
@@ -504,15 +529,14 @@ private fun VoiceSearchOverlayPanel(
                 }
             }
 
-            Spacer(modifier = Modifier.height(26.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
-            // Animated Microphone Visual
             val isListening = state is VoiceSearchState.Listening
             Box(contentAlignment = Alignment.Center) {
                 if (isListening) {
                     Box(
                         modifier = Modifier
-                            .size(104.dp)
+                            .size(100.dp)
                             .scale(pulseScale)
                             .clip(CircleShape)
                             .background(KaraokeCrimson.copy(alpha = 0.25f))
@@ -524,7 +548,7 @@ private fun VoiceSearchOverlayPanel(
                     shape = CircleShape,
                     containerColor = if (isListening) KaraokeCrimson else TvSurfaceElevated,
                     focusedContainerColor = KaraokeCrimson,
-                    modifier = Modifier.size(80.dp)
+                    modifier = Modifier.size(78.dp)
                 ) {
                     Box(
                         modifier = Modifier.fillMaxSize(),
@@ -534,7 +558,7 @@ private fun VoiceSearchOverlayPanel(
                             imageVector = if (isListening) Icons.Filled.GraphicEq else Icons.Filled.Mic,
                             contentDescription = "Mikrofon Pencarian Suara",
                             tint = Color.White,
-                            modifier = Modifier.size(38.dp)
+                            modifier = Modifier.size(36.dp)
                         )
                     }
                 }
@@ -542,16 +566,8 @@ private fun VoiceSearchOverlayPanel(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            // Status & Recognized Text
-            when {
-                permissionDeniedMessage != null -> {
-                    Text(
-                        text = permissionDeniedMessage,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = KaraokeCrimson
-                    )
-                }
-                state is VoiceSearchState.Listening -> {
+            when (state) {
+                is VoiceSearchState.Listening -> {
                     Text(
                         text = if (voiceLanguage == "id-ID") "Mendengarkan... Ucapkan judul lagu atau penyanyi"
                         else "Listening... Say a song title or singer name",
@@ -567,7 +583,7 @@ private fun VoiceSearchOverlayPanel(
                         )
                     }
                 }
-                state is VoiceSearchState.ResultReady -> {
+                is VoiceSearchState.ResultReady -> {
                     Text(
                         text = if (state.isConfident && !userEditedManually) {
                             "Hasil dikenali! Mencari otomatis... (atau koreksi teks di bawah)"
@@ -599,14 +615,14 @@ private fun VoiceSearchOverlayPanel(
                             .testTag("voice_result_edit_input")
                     )
                 }
-                state is VoiceSearchState.Error -> {
+                is VoiceSearchState.Error -> {
                     Text(
                         text = state.message,
                         style = MaterialTheme.typography.bodyLarge,
                         color = KaraokeCrimson
                     )
                 }
-                else -> {
+                VoiceSearchState.Idle -> {
                     Text(
                         text = "Tekan ikon mikrofon untuk mulai berbicara",
                         style = MaterialTheme.typography.bodyLarge,
@@ -617,7 +633,6 @@ private fun VoiceSearchOverlayPanel(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Action Buttons
             Row(
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -651,11 +666,38 @@ private fun VoiceSearchOverlayPanel(
                 }
 
                 TvFocusableSurface(
+                    onClick = onLaunchSystemVoice,
+                    testTag = "voice_system_button",
+                    shape = RoundedCornerShape(22.dp),
+                    containerColor = TvSurfaceElevated,
+                    focusedContainerColor = KaraokeCyan
+                ) { isFocused ->
+                    Row(
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Mic,
+                            contentDescription = null,
+                            tint = if (isFocused) TvBackground else KaraokeCyan,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Mic Remote TV",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (isFocused) TvBackground else TextPrimary
+                        )
+                    }
+                }
+
+                TvFocusableSurface(
                     onClick = onRetryListening,
                     testTag = "voice_retry_button",
                     shape = RoundedCornerShape(22.dp),
                     containerColor = TvSurfaceElevated,
-                    focusedContainerColor = KaraokeCyan
+                    focusedContainerColor = KaraokeCyan,
+                    modifier = Modifier.focusRequester(retryFocusRequester)
                 ) { isFocused ->
                     Row(
                         modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
