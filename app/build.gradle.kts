@@ -20,6 +20,7 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    buildConfigField("String", "YOUTUBE_API_KEY", "\"\"")
   }
 
   // Do not remove or modify these signingConfigs. They are necessary for building, installing,
