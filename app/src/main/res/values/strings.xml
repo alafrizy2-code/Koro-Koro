@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">Koro Koro TV</string>
+    <string name="nav_home">Beranda</string>
+    <string name="nav_search">Pencarian</string>
+    <string name="nav_voice_search">Pencarian Suara</string>
+    <string name="nav_categories">Kategori</string>
+    <string name="nav_favorites">Favorit</string>
+    <string name="nav_history">Riwayat</string>
+    <string name="nav_playlists">Playlist</string>
+    <string name="nav_settings">Pengaturan</string>
+</resources>

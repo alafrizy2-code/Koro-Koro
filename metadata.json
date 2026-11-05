@@ -1,0 +1,10 @@
+{
+  "name": "Koro Koro TV",
+  "description": "Aplikasi karaoke pribadi untuk Android TV dengan pencarian teks & suara, integrasi YouTube Data API v3, pemutar resmi YouTube, serta pemrosesan mikrofon USB & efek vokal real-time.",
+  "requestFramePermissions": [
+    "RECORD_AUDIO"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
