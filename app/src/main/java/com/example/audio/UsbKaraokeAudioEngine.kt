@@ -182,6 +182,18 @@ class UsbKaraokeAudioEngine(private val context: Context) {
         var track: AudioTrack? = null
 
         try {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED
+            ) {
+                _status.update {
+                    it.copy(
+                        isEngineRunning = false,
+                        routingNote = "Izin RECORD_AUDIO diperlukan untuk mengaktifkan Mic Monitor"
+                    )
+                }
+                return
+            }
+
             recorder = AudioRecord(
                 MediaRecorder.AudioSource.VOICE_COMMUNICATION,
                 sampleRate,
