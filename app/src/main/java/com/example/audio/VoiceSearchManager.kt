@@ -32,9 +32,11 @@ sealed interface VoiceSearchState {
 
 /**
  * Android TV Voice Search Manager using SpeechRecognizer with system RecognizerIntent fallback.
+ * Isolated from UsbKaraokeAudioEngine so Voice Search never alters vocal effects or Mic Monitor.
  */
 class VoiceSearchManager(
-    private val context: Context
+    private val context: Context,
+    private val usbAudioEngine: UsbKaraokeAudioEngine
 ) {
     private var speechRecognizer: SpeechRecognizer? = null
 
@@ -69,6 +71,7 @@ class VoiceSearchManager(
             return
         }
 
+        usbAudioEngine.pauseForVoiceSearch()
         stopInternal()
 
         val recognizer = SpeechRecognizer.createSpeechRecognizer(context)
@@ -97,12 +100,13 @@ class VoiceSearchManager(
             override fun onEndOfSpeech() {}
 
             override fun onError(error: Int) {
+                usbAudioEngine.resumeAfterVoiceSearch()
                 val needsFallback = error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ||
                     error == SpeechRecognizer.ERROR_CLIENT
                 val msg = when (error) {
                     SpeechRecognizer.ERROR_AUDIO -> "Gagal merekam audio mikrofon remote/TV."
                     SpeechRecognizer.ERROR_CLIENT -> "Mengalihkan ke mikrofon sistem Google TV..."
-                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Izin mikrofon belum diberikan. Tekan 'Mic Sistem TV' atau 'Ulangi Suara'."
+                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Izin mikrofon belum diberikan. Tekan 'Mic Remote TV' atau 'Ulangi Suara'."
                     SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
                         "Koneksi internet diperlukan untuk pengenalan suara."
                     SpeechRecognizer.ERROR_NO_MATCH -> "Suara tidak dikenali. Silakan ucapkan judul lagu atau penyanyi lebih jelas."
@@ -118,6 +122,7 @@ class VoiceSearchManager(
             }
 
             override fun onResults(results: Bundle?) {
+                usbAudioEngine.resumeAfterVoiceSearch()
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 val scores = results?.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES)
                 val bestText = matches?.firstOrNull()?.trim().orEmpty()
@@ -154,6 +159,7 @@ class VoiceSearchManager(
     }
 
     fun setDirectResult(text: String, languageTag: String) {
+        usbAudioEngine.resumeAfterVoiceSearch()
         val clean = text.trim()
         if (clean.isNotEmpty()) {
             _state.value = VoiceSearchState.ResultReady(
@@ -166,6 +172,7 @@ class VoiceSearchManager(
 
     fun resetState() {
         stopInternal()
+        usbAudioEngine.resumeAfterVoiceSearch()
         _state.value = VoiceSearchState.Idle
     }
 

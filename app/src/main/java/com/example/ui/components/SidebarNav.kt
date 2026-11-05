@@ -71,6 +71,7 @@ import com.example.model.SidebarDestination
 import com.example.ui.theme.DividerSubtle
 import com.example.ui.theme.KaraokeCrimson
 import com.example.ui.theme.KaraokeCyan
+import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.theme.TvSidebarBg
@@ -80,6 +81,7 @@ import com.example.ui.theme.TvSurfaceElevated
 fun SidebarNav(
     currentDestination: SidebarDestination,
     isExpanded: Boolean,
+    isUsbMicConnected: Boolean,
     onSidebarFocusChanged: (Boolean) -> Unit,
     onSelectDestination: (SidebarDestination) -> Unit,
     modifier: Modifier = Modifier
@@ -114,71 +116,103 @@ fun SidebarNav(
             .onFocusChanged { state ->
                 onSidebarFocusChanged(state.hasFocus)
             }
-            .padding(vertical = 20.dp, horizontal = 12.dp)
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+            .padding(vertical = 20.dp, horizontal = 12.dp),
+        verticalArrangement = Arrangement.SpaceBetween
     ) {
-        // Brand Header
-        Row(
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 6.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .weight(1f)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Box(
+            Row(
                 modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(
-                        Brush.linearGradient(
-                            listOf(KaraokeCrimson, Color(0xFF9C27B0))
-                        )
-                    ),
-                contentAlignment = Alignment.Center
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.Filled.Mic,
-                    contentDescription = "Koro Koro TV",
-                    tint = Color.White,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-
-            if (isExpanded) {
-                Column(modifier = Modifier.padding(start = 12.dp)) {
-                    Text(
-                        text = "Koro Koro",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = TextPrimary,
-                        maxLines = 1
-                    )
-                    Text(
-                        text = "KARAOKE TV",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = KaraokeCyan,
-                        letterSpacing = androidx.compose.ui.unit.TextUnit(1.5f, androidx.compose.ui.unit.TextUnitType.Sp)
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.linearGradient(
+                                listOf(KaraokeCrimson, Color(0xFF9C27B0))
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Mic,
+                        contentDescription = "Koro Koro TV",
+                        tint = Color.White,
+                        modifier = Modifier.size(22.dp)
                     )
                 }
+
+                if (isExpanded) {
+                    Column(modifier = Modifier.padding(start = 12.dp)) {
+                        Text(
+                            text = "Koro Koro",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = TextPrimary,
+                            maxLines = 1
+                        )
+                        Text(
+                            text = "KARAOKE TV",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = KaraokeCyan,
+                            letterSpacing = androidx.compose.ui.unit.TextUnit(1.5f, androidx.compose.ui.unit.TextUnitType.Sp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            SidebarDestination.entries.forEach { dest ->
+                val isSelected = currentDestination == dest
+                val itemModifier = if (dest == SidebarDestination.HOME) {
+                    Modifier.focusRequester(homeFocusRequester)
+                } else {
+                    Modifier
+                }
+                SidebarNavItem(
+                    destination = dest,
+                    isSelected = isSelected,
+                    isExpanded = isExpanded,
+                    onClick = { onSelectDestination(dest) },
+                    modifier = itemModifier
+                )
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
-
-        SidebarDestination.entries.forEach { dest ->
-            val isSelected = currentDestination == dest
-            val itemModifier = if (dest == SidebarDestination.HOME) {
-                Modifier.focusRequester(homeFocusRequester)
-            } else {
-                Modifier
-            }
-            SidebarNavItem(
-                destination = dest,
-                isSelected = isSelected,
-                isExpanded = isExpanded,
-                onClick = { onSelectDestination(dest) },
-                modifier = itemModifier
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(TvSurfaceElevated.copy(alpha = 0.7f))
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = if (isExpanded) Arrangement.Start else Arrangement.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(if (isUsbMicConnected) Color(0xFF00E676) else TextMuted)
             )
+            if (isExpanded) {
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = if (isUsbMicConnected) "USB Mic Aktif" else "Mic Siap",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (isUsbMicConnected) Color(0xFF00E676) else TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
     }
 }

@@ -6,26 +6,48 @@ import android.os.Bundle
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.model.SidebarDestination
+import com.example.model.VocalPreset
 import com.example.ui.MainViewModel
+import com.example.ui.components.ExternalPlayerDialog
 import com.example.ui.components.SidebarNav
 import com.example.ui.components.TopSearchBar
 import com.example.ui.screens.CategoriesScreen
@@ -36,8 +58,12 @@ import com.example.ui.screens.KaraokePlayerScreen
 import com.example.ui.screens.PlaylistsScreen
 import com.example.ui.screens.SearchScreen
 import com.example.ui.screens.SettingsScreen
+import com.example.ui.theme.KaraokeCyan
 import com.example.ui.theme.KoroKoroTvTheme
+import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TvBackground
+import com.example.ui.theme.TvSurface
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
 
@@ -48,11 +74,11 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         setContent {
-            val startupMicPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+            val startupMicPermissionLauncher = rememberLauncherForActivityResult(
                 contract = ActivityResultContracts.RequestPermission()
             ) { _ -> }
 
-            androidx.compose.runtime.LaunchedEffect(Unit) {
+            LaunchedEffect(Unit) {
                 if (ContextCompat.checkSelfPermission(
                         this@MainActivity,
                         Manifest.permission.RECORD_AUDIO
@@ -61,8 +87,12 @@ class MainActivity : ComponentActivity() {
                     startupMicPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                 }
             }
+
             KoroKoroTvTheme {
                 val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+                val vocalSettings by viewModel.vocalSettings.collectAsStateWithLifecycle()
+                val voiceLanguage by viewModel.voiceLanguage.collectAsStateWithLifecycle()
+                val usbMicStatus by viewModel.usbMicStatus.collectAsStateWithLifecycle()
                 val voiceSearchState by viewModel.voiceSearchState.collectAsStateWithLifecycle()
                 val favorites by viewModel.favorites.collectAsStateWithLifecycle()
                 val history by viewModel.history.collectAsStateWithLifecycle()
@@ -72,8 +102,20 @@ class MainActivity : ComponentActivity() {
                     favorites.map { it.videoId }.toSet()
                 }
 
+                val tizenTubeApp = remember(uiState.currentDestination) {
+                    viewModel.externalPlayerManager.findTizenTubeCobalt()
+                }
+
+                LaunchedEffect(uiState.presetHudMessage) {
+                    if (uiState.presetHudMessage != null) {
+                        delay(2400)
+                        viewModel.clearPresetHud()
+                    }
+                }
+
                 BackHandler(
-                    enabled = uiState.activePlayerSong == null &&
+                    enabled = uiState.activeInternalPlayerSong == null &&
+                        uiState.externalLaunchResult == null &&
                         uiState.currentDestination != SidebarDestination.HOME
                 ) {
                     viewModel.navigateTo(SidebarDestination.HOME)
@@ -85,28 +127,28 @@ class MainActivity : ComponentActivity() {
                         .background(TvBackground)
                         .windowInsetsPadding(WindowInsets.safeDrawing)
                 ) {
-                    val activeSong = uiState.activePlayerSong
-                    if (activeSong != null) {
+                    val internalSong = uiState.activeInternalPlayerSong
+                    if (internalSong != null) {
                         KaraokePlayerScreen(
-                            song = activeSong,
+                            song = internalSong,
                             relatedQueue = uiState.relatedQueue,
-                            isFavorite = favoriteIds.contains(activeSong.videoId),
+                            isFavorite = favoriteIds.contains(internalSong.videoId),
                             playlists = playlists,
-                            onBack = { viewModel.closePlayer() },
+                            onBack = { viewModel.closeInternalPlayer() },
                             onToggleFavorite = {
                                 viewModel.toggleFavorite(
-                                    activeSong,
-                                    favoriteIds.contains(activeSong.videoId)
+                                    internalSong,
+                                    favoriteIds.contains(internalSong.videoId)
                                 )
                             },
                             onAddSongToPlaylist = { playlistId ->
-                                viewModel.addSongToPlaylist(playlistId, activeSong)
+                                viewModel.addSongToPlaylist(playlistId, internalSong)
                             },
                             onPlayNextSong = { next ->
                                 viewModel.playSong(next, uiState.relatedQueue)
                             },
                             onUpdatePosition = { pos ->
-                                viewModel.updatePlaybackPosition(activeSong.videoId, pos)
+                                viewModel.updatePlaybackPosition(internalSong.videoId, pos)
                             }
                         )
                     } else {
@@ -114,6 +156,7 @@ class MainActivity : ComponentActivity() {
                             SidebarNav(
                                 currentDestination = uiState.currentDestination,
                                 isExpanded = uiState.isSidebarFocused,
+                                isUsbMicConnected = usbMicStatus.isUsbConnected,
                                 onSidebarFocusChanged = { focused ->
                                     viewModel.setSidebarFocused(focused)
                                 },
@@ -169,7 +212,7 @@ class MainActivity : ComponentActivity() {
                                                 isSearching = uiState.isSearching,
                                                 showVoiceOverlay = uiState.showVoiceOverlay,
                                                 voiceSearchState = voiceSearchState,
-                                                voiceLanguage = uiState.voiceLanguage,
+                                                voiceLanguage = voiceLanguage,
                                                 favoriteIds = favoriteIds,
                                                 voiceSearchManager = viewModel.voiceSearchManager,
                                                 onQueryChange = { viewModel.updateSearchQuery(it) },
@@ -239,14 +282,79 @@ class MainActivity : ComponentActivity() {
 
                                         SidebarDestination.SETTINGS -> {
                                             SettingsScreen(
-                                                voiceLanguage = uiState.voiceLanguage,
+                                                vocalSettings = vocalSettings,
+                                                usbMicStatus = usbMicStatus,
+                                                tizenTubeApp = tizenTubeApp,
+                                                voiceLanguage = voiceLanguage,
                                                 isLiveYouTubeApi = uiState.isLiveYouTubeApi,
+                                                onApplyPreset = { viewModel.applyVocalPreset(it) },
+                                                onUpdateVocalSettings = { viewModel.updateVocalSettings(it) },
+                                                onToggleEngine = { viewModel.toggleAudioEngine() },
+                                                onRefreshUsbMic = { viewModel.usbAudioEngine.refreshUsbMicDetection() },
                                                 onSetVoiceLanguage = { viewModel.setVoiceLanguage(it) }
                                             )
                                         }
                                     }
                                 }
                             }
+                        }
+
+                        // TizenTube Cobalt External Player Dialog
+                        val selectedSong = uiState.selectedSongForExternal
+                        val launchRes = uiState.externalLaunchResult
+                        if (selectedSong != null && launchRes != null) {
+                            ExternalPlayerDialog(
+                                song = selectedSong,
+                                launchResult = launchRes,
+                                isFavorite = favoriteIds.contains(selectedSong.videoId),
+                                activePreset = vocalSettings.preset,
+                                onRetryTizenTube = { viewModel.retryTizenTubeForSelected() },
+                                onSelectAlternativePlayer = { app ->
+                                    viewModel.launchAlternativePlayer(app)
+                                },
+                                onOpenSystemChooser = { viewModel.launchSystemChooser() },
+                                onOpenInternalPlayer = { viewModel.openInternalPlayerFallback() },
+                                onToggleFavorite = {
+                                    viewModel.toggleFavorite(
+                                        selectedSong,
+                                        favoriteIds.contains(selectedSong.videoId)
+                                    )
+                                },
+                                onDismiss = { viewModel.dismissExternalDialog() }
+                            )
+                        }
+                    }
+
+                    // 0-9 Numeric Remote Vocal Preset HUD
+                    AnimatedVisibility(
+                        visible = uiState.presetHudMessage != null,
+                        enter = fadeIn(),
+                        exit = fadeOut(),
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(24.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(TvSurface.copy(alpha = 0.95f))
+                                .border(1.5.dp, KaraokeCyan, RoundedCornerShape(16.dp))
+                                .padding(horizontal = 18.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.GraphicEq,
+                                contentDescription = null,
+                                tint = KaraokeCyan,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = uiState.presetHudMessage.orEmpty(),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = TextPrimary
+                            )
                         }
                     }
                 }
@@ -259,12 +367,34 @@ class MainActivity : ComponentActivity() {
             keyCode == KeyEvent.KEYCODE_SEARCH ||
             keyCode == KeyEvent.KEYCODE_MEDIA_RECORD
         ) {
-            if (viewModel.uiState.value.activePlayerSong != null) {
-                viewModel.closePlayer()
+            if (viewModel.uiState.value.activeInternalPlayerSong != null) {
+                viewModel.closeInternalPlayer()
             }
             viewModel.openVoiceSearchModal()
             return true
         }
+
+        // Numeric 0-9 remote keys for instant Vocal Preset switching
+        val digit = when (keyCode) {
+            KeyEvent.KEYCODE_0, KeyEvent.KEYCODE_NUMPAD_0 -> 0
+            KeyEvent.KEYCODE_1, KeyEvent.KEYCODE_NUMPAD_1 -> 1
+            KeyEvent.KEYCODE_2, KeyEvent.KEYCODE_NUMPAD_2 -> 2
+            KeyEvent.KEYCODE_3, KeyEvent.KEYCODE_NUMPAD_3 -> 3
+            KeyEvent.KEYCODE_4, KeyEvent.KEYCODE_NUMPAD_4 -> 4
+            KeyEvent.KEYCODE_5, KeyEvent.KEYCODE_NUMPAD_5 -> 5
+            KeyEvent.KEYCODE_6, KeyEvent.KEYCODE_NUMPAD_6 -> 6
+            KeyEvent.KEYCODE_7, KeyEvent.KEYCODE_NUMPAD_7 -> 7
+            KeyEvent.KEYCODE_8, KeyEvent.KEYCODE_NUMPAD_8 -> 8
+            KeyEvent.KEYCODE_9, KeyEvent.KEYCODE_NUMPAD_9 -> 9
+            else -> null
+        }
+        if (digit != null) {
+            VocalPreset.fromKeyNumber(digit)?.let { preset ->
+                viewModel.applyVocalPreset(preset)
+                return true
+            }
+        }
+
         return super.onKeyDown(keyCode, event)
     }
 }
